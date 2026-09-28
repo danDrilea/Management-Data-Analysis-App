@@ -453,8 +453,8 @@ USER QUESTION / COMMAND:
 "{question}"
 
 INSTRUCTIONS:
-1. Provide a direct, concise answer in plain English (1-2 sentences).
-   - If the user asks about the current chart, trend, anomalies, or what they are looking at, use the CURRENT DASHBOARD STATE to explain what is visible.
+1. When the user asks a calculation, ranking, or analytical question, your Python code will calculate the exact numbers. In ANSWER, explain your query logic or action (e.g. "Calculating total profit by Sub-Category to identify the lowest..."). NEVER invent, guess, or hallucinate specific numbers, amounts, or dates before your code executes. The system will inject the exact computed figures after your code runs.
+   - For dashboard control or view commands, confirm the dashboard updates directly.
 2. Write clean Python/Pandas code using `df_filtered` and assign the final output to a variable named `result`.
    - If the user's request is purely a dashboard control or filter change (e.g. "remove region from filter fields", "filter to West", "show monthly sales in Chart 1", "reset filters"), set `result = None`. Do NOT return the entire dataset.
    - For analytical questions, calculations, rankings, or data retrieval (e.g. "top 10 products", "what is total profit"), assign the resulting DataFrame, Series, number, or string to `result`.
@@ -520,13 +520,86 @@ DASHBOARD_ACTIONS:
 """
         try:
             raw_response = self._call_gemini(prompt, temperature=0.1)
-            return self._parse_and_execute_response(raw_response, df)
+            return self._parse_and_execute_response(raw_response, df, question=question)
         except Exception as e:
             res = self._handle_offline_generic_qa(df, question)
             res["explanation"] = f"*(Gemini API notice: `{str(e)[:160]}`. Switched to local handler)*\n\n" + res["explanation"]
             return res
 
-    def _parse_and_execute_response(self, raw_text: str, df: pd.DataFrame) -> Dict[str, Any]:
+    def _synthesize_factual_explanation(
+        self,
+        question: str,
+        result_data: Any,
+        initial_explanation: str,
+        actions: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Grounds the final answer in the ACTUAL output of the executed Python code, preventing LLM hallucinations."""
+        if result_data is None:
+            return initial_explanation
+
+        # If result is empty DataFrame
+        if isinstance(result_data, pd.DataFrame) and result_data.empty:
+            return "No matching records found for this query in the filtered dataset."
+
+        # Format a concise summary of the actual computed data
+        data_str = ""
+        if isinstance(result_data, (pd.DataFrame, pd.Series)):
+            if isinstance(result_data, pd.Series):
+                res_df = result_data.reset_index()
+            else:
+                res_df = result_data
+            data_str = res_df.head(15).to_string(index=False)
+        elif isinstance(result_data, (int, float, np.number)):
+            data_str = f"Result value: {result_data:,.2f}"
+        else:
+            data_str = str(result_data)[:500]
+
+        # Call LLM to summarize with 100% fidelity to the actual computed data
+        if self.is_configured() and data_str:
+            synth_prompt = f"""You are a strict data analyst.
+The user asked: "{question}"
+
+The Python code has executed on the actual dataset and computed the following EXACT data:
+{data_str}
+
+Write a direct, 1-2 sentence answer to the user's question.
+RULES:
+1. Use ONLY the exact numbers, entity names, and categories present in the computed data above.
+2. Do NOT invent, assume, or cite numbers, years, or regions not present in the computed data.
+3. If Chart 1 or Chart 2 was updated, mention that the chart was updated.
+4. Keep the answer concise and direct.
+"""
+            try:
+                factual_ans = self._call_gemini(synth_prompt, temperature=0.0).strip()
+                if factual_ans and len(factual_ans) > 5:
+                    return factual_ans
+            except Exception:
+                pass
+
+        # Deterministic fallback if API call fails or offline
+        if isinstance(result_data, pd.DataFrame) and not result_data.empty:
+            cols = result_data.columns.tolist()
+            num_cols = [c for c in cols if pd.api.types.is_numeric_dtype(result_data[c])]
+            cat_cols = [c for c in cols if c not in num_cols]
+            q_low = question.lower()
+
+            if num_cols and cat_cols:
+                n_col = num_cols[0]
+                c_col = cat_cols[0]
+                if any(w in q_low for w in ["lowest", "bottom", "worst", "minimum", "least", "min"]):
+                    sorted_df = result_data.sort_values(by=n_col, ascending=True)
+                    row = sorted_df.iloc[0]
+                    val_str = f"{row[n_col]:,.2f}" if isinstance(row[n_col], (float, np.floating)) else f"{row[n_col]:,}"
+                    return f"The {c_col} with the lowest {n_col} is **{row[c_col]}** with **{val_str}**."
+                elif any(w in q_low for w in ["highest", "top", "best", "maximum", "most", "max"]):
+                    sorted_df = result_data.sort_values(by=n_col, ascending=False)
+                    row = sorted_df.iloc[0]
+                    val_str = f"{row[n_col]:,.2f}" if isinstance(row[n_col], (float, np.floating)) else f"{row[n_col]:,}"
+                    return f"The {c_col} with the highest {n_col} is **{row[c_col]}** with **{val_str}**."
+
+        return initial_explanation
+
+    def _parse_and_execute_response(self, raw_text: str, df: pd.DataFrame, question: str = "") -> Dict[str, Any]:
         explanation = ""
         code_str = ""
         actions = None
@@ -579,9 +652,18 @@ DASHBOARD_ACTIONS:
                     result_data = result_data.reset_index()
                 elif isinstance(result_data, pd.DataFrame):
                     result_data = result_data.head(100)
+
+                # Ground the explanation in the REAL computed data to prevent hallucination!
+                final_explanation = self._synthesize_factual_explanation(
+                    question=question,
+                    result_data=result_data,
+                    initial_explanation=explanation,
+                    actions=actions,
+                )
+
                 return {
                     "status": "success",
-                    "explanation": explanation or "Query results:",
+                    "explanation": final_explanation or "Query results:",
                     "code": code_str,
                     "data": result_data,
                     "actions": actions,
