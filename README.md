@@ -1,6 +1,6 @@
 # Management Data Analysis App
-> **Interactive Management Dashboard & AI Data Analyst Agent**  
-> *Developed for the Data Analyst Technical Evaluation (Task 2)*
+
+An interactive tabular data analysis platform and natural language query assistant built with Streamlit, Plotly, and Google Gemini API. Upload any CSV dataset to explore schema properties, apply dynamic multi-criteria filters, build interactive visualizations, and ask questions in plain English.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.35+-FF4B4B.svg)](https://streamlit.io/)
@@ -9,127 +9,116 @@
 
 ---
 
-## 📌 Executive Overview
+## Features
 
-The **Management Data Analysis App** is a streamlined decision support tool designed for non-technical management. It allows executives to drag and drop **any corporate CSV dataset** (or default to the 9,994-row Kaggle Superstore dataset), interact with auto-generated slicers, view dynamic visualizations, and query the dataset in natural language using an AI Data Analyst.
+### 1. Dynamic Schema Ingestion
+- Upload any structured CSV file via drag-and-drop or the sidebar file selector.
+- Automatic column type classification: detects dates, timestamps, business metrics, and categorical dimensions.
+- Excludes pure identifiers (e.g., ID numbers, postal codes, keys, indexes) from numeric aggregations.
 
-### Task 2 Components Delivered:
-1. **Artifact 1 – Interactive Dashboard & Data Explorer:**
-   - **Drag-and-Drop Ingestion:** Upload any company CSV or use the pre-loaded `superstore.csv`.
-   - **Executive KPI Cards:** Auto-computes top-line volume, profitability margins, and key metrics.
-   - **Dynamic Slicers:** Automatically detects dates and categories to generate clean filters.
-   - **Interactive Visualizations:** Monthly trends, category margin matrices, and distributions.
-   - **Data Explorer:** Search, customize visible columns, and download filtered slices as CSV.
+### 2. Adaptive Filtering Engine
+- **Date Filter:** Calendar pickers and year selectors adapt to multi-year and intra-year ranges.
+- **Category Slicers:** Discovers categorical fields and generates multi-select filters with live value counts. Select only the fields you want to filter.
+- **Numeric Range Filter:** Sliders to filter records within minimum and maximum numeric thresholds.
+- **Global Search:** Keyword search filtering across all text columns.
+- **Filter Reset:** One-click reset restoring full data scope.
 
-2. **Basic AI Agent – Conversational Text-to-Pandas:**
-   - Non-technical managers can ask plain-English questions (e.g. *"What are the top 5 cities by sales?"*).
-   - Powered by **Google Gemini** with an **AST (Abstract Syntax Tree) Security Sandbox** that ensures queries are safe and run exclusively on `df_filtered`.
-   - Returns concise executive explanations, structured data tables, and an optional query logic inspector.
-   - **Zero-Crash Architecture:** Works seamlessly even if no API key is provided, thanks to an embedded local analytical engine.
+### 3. Executive KPI Cards
+- Four aligned summary cards at the top of the dashboard: Total Records, Total Attributes, and two customizable business metrics.
+- Dropdown controls positioned neatly below cards 3 and 4 allow instant switching between metrics and aggregation types (Sum, Average, Median, Min, Max).
+
+### 4. Interactive Visualizations
+- **Trend & Comparison Studio:** Choose X-axis dimension (time series or categories), Y-axis metric (or record counts), chart type (Line, Bar, Area), aggregation method (Sum, Mean, Count, Max, Min), and time grain (Daily, Monthly, Quarterly, Yearly) or top-N limits.
+- **Category Breakdown Studio:** Select any dimension and metric or record count, with Donut, Horizontal Bar, and Vertical Bar chart options.
+
+### 5. Data Explorer & Export
+- Interactive full-width data grid supporting column customization, real-time row filtering, and pagination.
+- One-click CSV export of the currently filtered dataset slice.
+- Direct routing destination for AI exploratory query results.
+
+### 6. Embedded AI Copilot
+- Natural language query assistant powered by Google Gemini (with offline heuristic fallback).
+- Context-aware: sees current filters, KPI figures, and active chart configurations.
+- Full Dashboard Control: filter data, remove filter fields, configure charts, and switch views via plain English commands (e.g., *"filter to West region"*, *"remove region from filter fields"*, *"show monthly sales in chart 1"*).
+- Smart tabular routing: wide query results are automatically displayed in the full-width Data Explorer tab rather than cluttering the chat container.
+- Dynamic AI-generated suggested actions tailored to the uploaded dataset schema.
+- Safe Text-to-Pandas execution with AST code sandboxing.
 
 ---
 
-## 🏗️ Architecture & Security Design
+## Architecture & File Structure
 
 ```
 Management-Data-Analysis-App/
-│
-├── app.py              # Streamlit dashboard, slicers, drag-and-drop uploader, data explorer
-├── agent_engine.py     # AI Agent (Gemini API, AST sandboxed executor, generic Q&A fallback)
-├── superstore.csv      # Default Kaggle Superstore dataset (9,994 records)
-├── requirements.txt    # Pinned dependencies
-├── .env.example        # Environment variable template
-├── .env                # Local API key file (git-ignored)
-└── README.md           # Documentation & presentation guide
+|-- app.py              # Main Streamlit web application, UI layouts, and reactive filters
+|-- agent_engine.py     # AI agent engine, AST sandboxed executor, and query handlers
+|-- requirements.txt    # Project dependencies
+|-- .env.example        # Environment variable template
+|-- .env                # Local secrets configuration (git-ignored)
++-- README.md           # Project documentation
 ```
 
-### AST Sandboxed Query Execution
-To prevent arbitrary code execution, `agent_engine.py` parses all AI-generated Python code using Python's Abstract Syntax Tree (`ast`):
-- ❌ Blocks all `import`, `exec`, `eval`, `open`, `compile`, or OS/network calls.
-- ❌ Blocks private dunder attributes (`__`).
-- ✅ Restricts operations strictly to Pandas and NumPy calculations on the filtered dataset.
+### Security Sandbox
+AI-generated code is parsed and validated using Python's `ast` module before execution:
+- Blocks imports (`import`, `from ... import`).
+- Blocks dangerous built-ins (`eval`, `exec`, `open`, `compile`, `__import__`).
+- Blocks access to system and OS modules (`os`, `sys`, `subprocess`, `requests`).
+- Blocks private dunder attributes (`__`).
+- Restricts runtime access strictly to Pandas and NumPy operations on the filtered dataset.
 
 ---
 
-## 🚀 Quick Start Guide
+## Getting Started
 
-### 1. Setup Virtual Environment
-```bash
-# Clone the repository
-git clone https://github.com/danDrilea/Management-Data-Analysis-App.git
-cd Management-Data-Analysis-App
+### Prerequisites
+- Python 3.10 or higher
+- Git
 
-# Create virtual environment
-python -m venv .venv
+### Installation
 
-# Activate virtual environment
-# Windows (PowerShell):
-.\.venv\Scripts\Activate.ps1
-# Linux / macOS:
-source .venv/bin/activate
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/danDrilea/Management-Data-Analysis-App.git
+   cd Management-Data-Analysis-App
+   ```
 
-# Install dependencies
-pip install -r requirements.txt
-```
+2. Create and activate a virtual environment:
+   ```bash
+   # Windows (PowerShell)
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
 
-### 2. Configure Google Gemini API Key (Optional)
-The key is handled silently in the background so management never encounters technical configuration fields in the UI:
-- Add your key to `.env`:
-  ```env
-  GEMINI_API_KEY=your_gemini_api_key_here
-  ```
-*(Note: If left empty, the app runs in **Demo Mode** with local analytical intelligence).*
+   # Linux / macOS
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
 
-### 3. Launch the App
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+### Configuration (Optional)
+
+To enable Gemini-powered natural language queries, provide a Google Gemini API key:
+
+1. Copy `.env.example` to `.env`:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Add your API key to `.env`:
+   ```env
+   GEMINI_API_KEY=your_gemini_api_key_here
+   ```
+
+If no API key is provided, the application runs with its built-in offline query fallback.
+
+### Running the Application
+
+Start the Streamlit application:
 ```bash
 streamlit run app.py
 ```
+
 Open `http://localhost:8501` in your browser.
-
----
-
-## 🌐 Free Cloud Hosting (Streamlit Community Cloud)
-
-When your project is ready, you can deploy it to the web for free in under 2 minutes:
-
-1. Push your repository to GitHub:
-   ```bash
-   git add .
-   git commit -m "Complete Management Data Analysis App"
-   git push origin main
-   ```
-2. Go to [share.streamlit.io](https://share.streamlit.io/) and log in with GitHub.
-3. Click **"New App"** and select:
-   - **Repository:** `danDrilea/Management-Data-Analysis-App`
-   - **Branch:** `main`
-   - **Main file path:** `app.py`
-4. Under **Advanced Settings > Secrets**, paste:
-   ```toml
-   GEMINI_API_KEY = "your_actual_key_here"
-   ```
-5. Click **Deploy**. Your app is live with a public URL (e.g., `https://management-data-analysis-app.streamlit.app`) to share with the evaluation team.
-
----
-
-## 🎤 5-Minute Technical Interview Presentation Guide
-
-### 1. Introduction (1 min)
-- *"For Task 2, I developed the **Management Data Analysis App** to bridge the gap between large transactional datasets and non-technical decision makers."*
-- *"It delivers both required components: an interactive visualization dashboard with drag-and-drop CSV exploration (**Artifact 1**), and an AI Analyst agent that translates natural language questions into safe Pandas queries (**Basic AI Agent**)."*
-
-### 2. Artifact 1: Dashboard & Data Exploration (2 mins)
-- Point out the top-line KPI cards (Revenue, Profit, Margin %).
-- Demonstrate the sidebar slicers (filtering by year or category) and show how the charts react in real-time.
-- Show the **Data Explorer**: search for a product or city, customize columns, and demonstrate the CSV export button.
-- Mention that any CSV can be dropped into the sidebar uploader to analyze new datasets on the fly.
-
-### 3. Basic AI Agent: Conversational Q&A (1.5 mins)
-- Switch to the **🤖 AI Analyst** tab.
-- Click a quick question or type: *"What are the top 5 cities by sales?"*
-- Highlight the plain-English executive takeaway and the structured table.
-- Open the **"View Python / Pandas Query Logic"** expander:
-  - *"To ensure production safety, I implemented an AST security validator that prevents arbitrary code execution while allowing safe Pandas queries."*
-
-### 4. Technical Highlights & Wrap-up (30 secs)
-- Mention clean modular design (`app.py` and `agent_engine.py`).
-- Note the zero-crash offline fallback and easy cloud deployment capability.
