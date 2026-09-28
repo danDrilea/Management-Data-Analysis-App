@@ -462,8 +462,13 @@ INSTRUCTIONS:
 4. Do NOT import anything. Only use operations on `df_filtered`, `pd`, and `np`.
 5. Pay attention to column semantics: do NOT sum or average YEAR or IDENTIFIER columns. Use them for grouping or filtering instead.
 6. Use exact column names as shown in the schema (they are case-sensitive).
-7. DASHBOARD CONTROL: If the user's question asks to filter data, remove filters, show specific charts, change visualisations, or configure views (e.g. "filter to West region", "remove region from filter fields", "clear filter", "show monthly sales in Chart 1", "break down profit by sub-category in chart 2", "reset filters", "show me the raw data"):
-   You MUST include a DASHBOARD_ACTIONS section specifying what to update.
+7. DASHBOARD CONTROL: You can control ALL dashboard buttons, dropdowns, and views:
+   - Filters: `date_range`, `date_year`, `add_or_replace`, `remove_fields`, `clear_filters`, `reset_all`, `search`
+   - Chart 1: `x`, `y`, `type` ('Line', 'Bar', 'Area'), `agg`, `time_grain` ('Daily', 'Monthly', 'Quarterly', 'Yearly'), `top_n`
+   - Chart 2: `category`, `metric`, `type` ('Donut', 'Horizontal Bar', 'Vertical Bar'), `top_n` ('All', 5, 8, 10, 15)
+   - KPIs: `kpi3_metric`, `kpi3_agg`, `kpi4_metric`, `kpi4_agg`
+   - View: `active_tab` ('Charts & Visualizations', 'Data Explorer & Export')
+   When the user asks to configure or adjust any of these (e.g. "set time grain to quarterly", "change chart 1 to line", "top 5 in chart 2", "filter to 2016"), you MUST include the DASHBOARD_ACTIONS section specifying the exact updates.
 
 Format your output strictly using this template:
 
@@ -480,6 +485,8 @@ DASHBOARD_ACTIONS:
 ```json
 {{
   "filters": {{
+    "date_range": ["YYYY-MM-DD", "YYYY-MM-DD"],
+    "date_year": 2016,
     "add_or_replace": {{"<ColumnName>": ["<Value1>"]}},
     "remove_fields": ["<ColumnName>"],
     "clear_filters": ["<ColumnName>"],
@@ -488,22 +495,24 @@ DASHBOARD_ACTIONS:
   "chart1": {{
     "x": "<ColumnName>",
     "y": "<MetricColumn>",
-    "type": "Bar",
-    "agg": "Sum"
+    "type": "Line" | "Bar" | "Area",
+    "agg": "Sum" | "Average" | "Count" | "Max" | "Min",
+    "time_grain": "Daily" | "Monthly" | "Quarterly" | "Yearly",
+    "top_n": 10 | 15 | 25 | 50
   }},
   "chart2": {{
     "category": "<CategoryColumn>",
     "metric": "<MetricColumn>",
-    "type": "Donut",
-    "agg": "Sum",
-    "top_n": 10
+    "type": "Donut" | "Horizontal Bar" | "Vertical Bar",
+    "top_n": 5 | 8 | 10 | 15 | "All"
   }},
   "kpis": {{
     "kpi3_metric": "<ColumnName>",
-    "kpi3_agg": "Sum",
+    "kpi3_agg": "Sum" | "Average" | "Median" | "Min" | "Max",
     "kpi4_metric": "<ColumnName>",
-    "kpi4_agg": "Average"
+    "kpi4_agg": "Sum" | "Average" | "Median" | "Min" | "Max"
   }},
+  "search": "<SearchText>",
   "active_tab": "Charts & Visualizations" | "Data Explorer & Export"
 }}
 ```

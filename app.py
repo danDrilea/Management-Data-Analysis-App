@@ -8,7 +8,8 @@ Built with Streamlit, Plotly, and Google Gemini API.
 """
 
 import os
-from datetime import datetime
+import re
+from datetime import datetime, date as datetime_date
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -421,6 +422,21 @@ def _apply_dashboard_actions(actions: dict, df: pd.DataFrame, num_cols: list):
     if not actions or not isinstance(actions, dict):
         return
 
+    # 0. Global actions
+    if actions.get("unload_dataset"):
+        st.session_state["uploader_version"] = st.session_state.get("uploader_version", 0) + 1
+        st.session_state["raw_df"] = None
+        st.session_state["data_name"] = None
+        st.session_state["loaded_fingerprint"] = None
+        _clear_dataset_state()
+        st.rerun()
+
+    if actions.get("clear_chat"):
+        st.session_state["chat_history"] = []
+
+    if "show_copilot" in actions:
+        st.session_state["show_copilot_panel"] = bool(actions["show_copilot"])
+
     # 1. Filters
     f_acts = actions.get("filters", {})
     if isinstance(f_acts, dict):
@@ -428,6 +444,9 @@ def _apply_dashboard_actions(actions: dict, df: pd.DataFrame, num_cols: list):
             for k in list(st.session_state.keys()):
                 if k.startswith(("filter_", "range_", "date_mode_")):
                     del st.session_state[k]
+            st.session_state["sidebar_search_text"] = ""
+            if "num_filter_col" in st.session_state:
+                del st.session_state["num_filter_col"]
 
         # Completely remove fields from slicers and clear values
         rem_fields = f_acts.get("remove_fields", [])
@@ -477,6 +496,83 @@ def _apply_dashboard_actions(actions: dict, df: pd.DataFrame, num_cols: list):
                         if matched_vals:
                             st.session_state[f"filter_{target_col}"] = matched_vals
 
+        # Date Filter handling (date range and year)
+        active_d_col = st.session_state.get("filter_active_date_col")
+        if not active_d_col and date_cols:
+            active_d_col = date_cols[0]
+
+        if active_d_col and active_d_col in df.columns:
+            dt_s = pd.to_datetime(df[active_d_col], errors="coerce").dropna()
+            if not dt_s.empty:
+                min_d = dt_s.min().date()
+                max_d = dt_s.max().date()
+                years_avail = sorted(dt_s.dt.year.unique().astype(int))
+
+                def _clamp_date(val, default_d):
+                    if val is None:
+                        return default_d
+                    if isinstance(val, (datetime, pd.Timestamp)):
+                        return val.date()
+                    if isinstance(val, datetime_date):
+                        return val
+                    try:
+                        p = pd.to_datetime(str(val).strip(), errors="coerce")
+                        if pd.notnull(p):
+                            return max(min_d, min(max_d, p.date()))
+                    except Exception:
+                        pass
+                    return default_d
+
+                target_range = None
+                target_year = None
+
+                # 1. Explicit date_range key
+                if "date_range" in f_acts and isinstance(f_acts["date_range"], (list, tuple)) and len(f_acts["date_range"]) >= 2:
+                    s_d = _clamp_date(f_acts["date_range"][0], min_d)
+                    e_d = _clamp_date(f_acts["date_range"][1], max_d)
+                    target_range = (min(s_d, e_d), max(s_d, e_d))
+
+                # 2. Explicit date_year key
+                if "date_year" in f_acts:
+                    try:
+                        y_int = int(f_acts["date_year"])
+                        if y_int in years_avail:
+                            target_year = y_int
+                    except Exception:
+                        pass
+
+                # 3. Check add_or_replace for date column or "date range"
+                if "add_or_replace" in f_acts and isinstance(f_acts["add_or_replace"], dict):
+                    for k_name, k_vals in list(f_acts["add_or_replace"].items()):
+                        k_low = str(k_name).strip().lower()
+                        is_date_field = k_low in ["date range", "daterange", "date", "dates", "order date", "order_date"] or (k_name in date_cols)
+                        if is_date_field:
+                            v_list = k_vals if isinstance(k_vals, (list, tuple)) else [k_vals]
+                            if len(v_list) >= 2:
+                                s_d = _clamp_date(v_list[0], min_d)
+                                e_d = _clamp_date(v_list[1], max_d)
+                                target_range = (min(s_d, e_d), max(s_d, e_d))
+                            elif len(v_list) == 1:
+                                v_s = str(v_list[0]).strip()
+                                if re.match(r'^(19\d\d|20\d\d)$', v_s):
+                                    y_int = int(v_s)
+                                    if y_int in years_avail:
+                                        target_year = y_int
+                                        target_range = (_clamp_date(f"{y_int}-01-01", min_d), _clamp_date(f"{y_int}-12-31", max_d))
+                                else:
+                                    s_d = _clamp_date(v_s, min_d)
+                                    target_range = (s_d, max_d)
+
+                if target_range:
+                    st.session_state[f"filter_range_{active_d_col}"] = target_range
+                    st.session_state[f"date_mode_{active_d_col}"] = "Date Range"
+                    if target_range[0].year == target_range[1].year and target_range[0].month == 1 and target_range[1].month == 12:
+                        st.session_state[f"filter_year_{active_d_col}"] = str(target_range[0].year)
+                elif target_year:
+                    st.session_state[f"filter_year_{active_d_col}"] = str(target_year)
+                    st.session_state[f"date_mode_{active_d_col}"] = "Year"
+                    st.session_state[f"filter_range_{active_d_col}"] = (_clamp_date(f"{target_year}-01-01", min_d), _clamp_date(f"{target_year}-12-31", max_d))
+
     # Active Tab Switching
     if "active_tab" in actions and actions["active_tab"] in ("Charts & Visualizations", "Data Explorer & Export"):
         st.session_state["dashboard_active_tab"] = actions["active_tab"]
@@ -497,6 +593,22 @@ def _apply_dashboard_actions(actions: dict, df: pd.DataFrame, num_cols: list):
             a = str(c1["agg"]).title()
             if a in ["Sum", "Average", "Count", "Max", "Min"]:
                 st.session_state["chart1_agg"] = a
+        # Chart 1 Time Grain
+        for g_k in ["time_grain", "grain", "granularity"]:
+            if g_k in c1:
+                g_val = str(c1[g_k]).strip().title()
+                for opt in ["Daily", "Monthly", "Quarterly", "Yearly"]:
+                    if opt.lower() == g_val.lower():
+                        st.session_state["chart1_grain"] = opt
+                        break
+        # Chart 1 Top N
+        if "top_n" in c1:
+            try:
+                tn = int(c1["top_n"])
+                if tn in [10, 15, 25, 50]:
+                    st.session_state["chart1_top_n"] = tn
+            except Exception:
+                pass
 
     # 3. Chart 2
     c2 = actions.get("chart2", {})
@@ -512,10 +624,16 @@ def _apply_dashboard_actions(actions: dict, df: pd.DataFrame, num_cols: list):
                 if valid_t.lower() == t.lower():
                     st.session_state["chart2_type"] = valid_t
         if "top_n" in c2:
-            try:
-                st.session_state["chart2_top_n"] = int(c2["top_n"])
-            except Exception:
-                pass
+            raw_tn = str(c2["top_n"]).strip().title()
+            if raw_tn == "All":
+                st.session_state["chart2_top_n"] = "All"
+            else:
+                try:
+                    tn = int(raw_tn)
+                    if tn in [5, 8, 10, 15]:
+                        st.session_state["chart2_top_n"] = tn
+                except Exception:
+                    pass
 
     # 4. KPIs
     kpi = actions.get("kpis", {})
@@ -530,6 +648,24 @@ def _apply_dashboard_actions(actions: dict, df: pd.DataFrame, num_cols: list):
                 for a in ["Sum", "Average", "Median", "Min", "Max"]:
                     if a.lower() == str(kpi[k]).lower():
                         st.session_state[k] = a
+
+    # 5. Global Search in records
+    search_act = actions.get("search") or f_acts.get("search")
+    if search_act is not None:
+        st.session_state["sidebar_search_text"] = "" if search_act in [False, "clear", "reset"] else str(search_act).strip()
+
+    # 6. Numeric Metric Filter
+    num_f = actions.get("numeric_filter") or f_acts.get("numeric_filter")
+    if isinstance(num_f, dict) and "column" in num_f:
+        for c in num_cols:
+            if c.lower() == str(num_f["column"]).lower():
+                st.session_state["num_filter_col"] = c
+                if "min" in num_f and "max" in num_f:
+                    try:
+                        st.session_state[f"range_{c}"] = (float(num_f["min"]), float(num_f["max"]))
+                    except Exception:
+                        pass
+                break
 
 
 # Ensure active slicers are initialized in session_state before actions or widgets run
@@ -576,6 +712,8 @@ with st.sidebar:
                 years = sorted(valid_dates.dt.year.unique().astype(int))
 
                 if len(years) > 1:
+                    if f"date_mode_{active_date_col}" not in st.session_state:
+                        st.session_state[f"date_mode_{active_date_col}"] = "Date Range"
                     filter_mode = st.radio(
                         f"Mode ({active_date_col})",
                         options=["Date Range", "Year"],
@@ -586,10 +724,11 @@ with st.sidebar:
                     filter_mode = "Date Range"
 
                 if filter_mode == "Year":
+                    if f"filter_year_{active_date_col}" not in st.session_state:
+                        st.session_state[f"filter_year_{active_date_col}"] = "All Years"
                     selected_year = st.selectbox(
                         "Select Year",
                         options=["All Years"] + [str(y) for y in years],
-                        index=0,
                         key=f"filter_year_{active_date_col}",
                     )
                     if selected_year != "All Years":
@@ -598,9 +737,10 @@ with st.sidebar:
                             pd.to_datetime(filtered_df[active_date_col], errors="coerce").dt.year == int(selected_year)
                         ]
                 else:
+                    if f"filter_range_{active_date_col}" not in st.session_state:
+                        st.session_state[f"filter_range_{active_date_col}"] = (min_date, max_date)
                     date_val = st.date_input(
                         "Select Range",
-                        value=(min_date, max_date),
                         min_value=min_date,
                         max_value=max_date,
                         key=f"filter_range_{active_date_col}",
@@ -1378,6 +1518,22 @@ if show_copilot and col_copilot is not None:
 
             # Direct intent matcher for filter removal commands
             q_low = copilot_query.lower()
+
+            # Global actions: Unload Dataset, Clear Chat, Toggle Copilot
+            if any(w in q_low for w in ["unload dataset", "clear dataset", "remove dataset", "close dataset", "disconnect dataset"]):
+                actions["unload_dataset"] = True
+            if any(w in q_low for w in ["clear chat", "clear history", "reset conversation", "clear messages"]):
+                actions["clear_chat"] = True
+            if any(w in q_low for w in ["hide copilot", "close copilot", "hide ai panel", "close ai panel", "hide panel"]):
+                actions["show_copilot"] = False
+            elif any(w in q_low for w in ["show copilot", "open copilot", "show ai panel", "open ai panel", "open panel"]):
+                actions["show_copilot"] = True
+
+            # Reset all filters
+            if any(w in q_low for w in ["reset all filters", "clear all filters", "reset filters", "remove all filters"]):
+                actions.setdefault("filters", {})["reset_all"] = True
+
+            # Filter field removal / clearing
             if any(w in q_low for w in ["remove", "clear", "delete", "drop", "reset"]) and any(w in q_low for w in ["filter", "field", "slicer"]):
                 for col_candidate in raw_df.columns:
                     if col_candidate.lower() in q_low:
@@ -1391,9 +1547,88 @@ if show_copilot and col_copilot is not None:
                         if col_candidate not in clr_f:
                             clr_f.append(col_candidate)
 
+            # Direct intent matcher for date range and specific years (e.g. "entirety of year 2016", "year 2016")
+            if date_cols:
+                year_match = re.search(r'\b(?:entirety\s+of\s+year\s+|year\s+|entire\s+year\s+|in\s+)(19\d\d|20\d\d)\b', q_low)
+                if not year_match and any(w in q_low for w in ["range", "date", "filter", "period", "between"]):
+                    year_match = re.search(r'\b(19\d\d|20\d\d)\b', q_low)
+
+                range_match = re.search(r'\b(19\d\d|20\d\d)[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\s*(?:to|-)\s*(19\d\d|20\d\d)[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b', q_low)
+
+                f_acts = actions.setdefault("filters", {})
+                if range_match:
+                    g = range_match.groups()
+                    f_acts["date_range"] = [f"{g[0]}-{int(g[1]):02d}-{int(g[2]):02d}", f"{g[3]}-{int(g[4]):02d}-{int(g[5]):02d}"]
+                elif year_match:
+                    y_str = year_match.group(1)
+                    f_acts["date_range"] = [f"{y_str}-01-01", f"{y_str}-12-31"]
+                    f_acts["date_year"] = int(y_str)
+
+            # Chart 1 Time Grain (e.g. "set time grain to quarterly", "quarterly", "monthly", "daily", "yearly")
+            grain_match = re.search(r'\b(daily|monthly|quarterly|yearly)\b', q_low)
+            if grain_match:
+                actions.setdefault("chart1", {})["time_grain"] = grain_match.group(1).title()
+
+            # Chart 1 Type (Line, Bar, Area)
+            if any(w in q_low for w in ["chart 1", "trend", "comparison", "line chart", "area chart"]) or ("chart" in q_low and "chart 2" not in q_low and "breakdown" not in q_low):
+                if re.search(r'\b(line)\b', q_low):
+                    actions.setdefault("chart1", {})["type"] = "Line"
+                elif re.search(r'\b(area)\b', q_low):
+                    actions.setdefault("chart1", {})["type"] = "Area"
+                elif re.search(r'\b(bar)\b', q_low) and not any(w in q_low for w in ["donut", "horizontal bar", "vertical bar"]):
+                    actions.setdefault("chart1", {})["type"] = "Bar"
+
+            # Chart 1 Aggregation (Sum, Average, Count, Max, Min)
+            agg_match = re.search(r'\b(sum|average|avg|mean|count|max|maximum|min|minimum)\b', q_low)
+            if agg_match and ("chart 1" in q_low or "trend" in q_low or "agg" in q_low or "aggregation" in q_low):
+                agg_word = agg_match.group(1).lower()
+                agg_map = {"sum": "Sum", "average": "Average", "avg": "Average", "mean": "Average", "count": "Count", "max": "Max", "maximum": "Max", "min": "Min", "minimum": "Min"}
+                actions.setdefault("chart1", {})["agg"] = agg_map.get(agg_word, "Sum")
+
+            # Chart 1 Top Items (10, 15, 25, 50)
+            top_n1_match = re.search(r'(?:chart\s*1\s+top|show\s+top)\s*(10|15|25|50)\b', q_low)
+            if top_n1_match:
+                actions.setdefault("chart1", {})["top_n"] = int(top_n1_match.group(1))
+
+            # Chart 2 Type (Donut, Horizontal Bar, Vertical Bar)
+            if any(w in q_low for w in ["chart 2", "breakdown", "donut", "pie", "horizontal bar", "vertical bar"]):
+                if any(w in q_low for w in ["donut", "pie"]):
+                    actions.setdefault("chart2", {})["type"] = "Donut"
+                elif "horizontal" in q_low:
+                    actions.setdefault("chart2", {})["type"] = "Horizontal Bar"
+                elif "vertical" in q_low:
+                    actions.setdefault("chart2", {})["type"] = "Vertical Bar"
+
+            # Chart 2 Top Items (5, 8, 10, 15, All)
+            top_n2_match = re.search(r'(?:chart\s*2\s+top|breakdown\s+top|top\s+items?)\s*(5|8|10|15|all)\b', q_low)
+            if top_n2_match:
+                val = top_n2_match.group(1).lower()
+                actions.setdefault("chart2", {})["top_n"] = "All" if val == "all" else int(val)
+
+            # Workspace View (Charts & Visualizations, Data Explorer & Export)
+            if any(w in q_low for w in ["data explorer", "table view", "export view", "view data", "show explorer"]):
+                actions["active_tab"] = "Data Explorer & Export"
+            elif any(w in q_low for w in ["charts", "visualizations", "view charts", "show charts", "show dashboard", "workspace charts"]):
+                actions["active_tab"] = "Charts & Visualizations"
+
+            # Global Record Search
+            search_match = re.search(r'\b(?:search\s+(?:for\s+)?|find\s+)(["\'])(.*?)\1', q_low)
+            if not search_match and ("search" in q_low or "find" in q_low) and not any(w in q_low for w in ["column", "columns", "chart", "filter", "range", "date"]):
+                search_match = re.search(r'\b(?:search\s+(?:for\s+)?|find\s+records\s+with\s+|filter\s+search\s+)([A-Za-z0-9_\-\s]+)$', q_low)
+            if search_match:
+                s_val = search_match.group(2) if len(search_match.groups()) > 1 else search_match.group(1)
+                actions["search"] = s_val.strip()
+            elif "clear search" in q_low or "reset search" in q_low:
+                actions["search"] = ""
+
             # If user intent was purely a filter change or dashboard control, suppress dumping raw dataframe
-            is_control_cmd = any(w in q_low for w in ["remove", "clear", "delete", "drop", "reset", "filter to", "switch to", "show chart", "hide"])
-            if is_control_cmd and (actions.get("filters") or actions.get("chart1") or actions.get("chart2") or actions.get("active_tab")):
+            is_control_cmd = any(w in q_low for w in [
+                "remove", "clear", "delete", "drop", "reset", "filter", "select the range",
+                "range to", "switch to", "show chart", "hide", "time grain", "grain", "quarterly",
+                "monthly", "yearly", "daily", "top items", "top 10", "top 15", "top 5", "top 8",
+                "donut", "horizontal bar", "vertical bar", "unload dataset"
+            ])
+            if is_control_cmd and (actions.get("filters") or actions.get("chart1") or actions.get("chart2") or actions.get("active_tab") or actions.get("search")):
                 ai_res["data"] = None
 
             # Route dataframe results to Data Explorer tab
@@ -1412,6 +1647,12 @@ if show_copilot and col_copilot is not None:
                 if isinstance(f_acts, dict):
                     if f_acts.get("reset_all"):
                         applied_notes.append("Reset all filters")
+                    if "date_range" in f_acts:
+                        dr = f_acts["date_range"]
+                        if isinstance(dr, (list, tuple)) and len(dr) >= 2:
+                            applied_notes.append(f"Date Range: {dr[0]} to {dr[1]}")
+                    elif "date_year" in f_acts:
+                        applied_notes.append(f"Year: {f_acts['date_year']}")
                     if "remove_fields" in f_acts:
                         for rf in f_acts["remove_fields"]:
                             applied_notes.append(f"Removed field: {rf}")
@@ -1420,6 +1661,9 @@ if show_copilot and col_copilot is not None:
                             applied_notes.append(f"Cleared filter: {cf}")
                     if "add_or_replace" in f_acts and isinstance(f_acts["add_or_replace"], dict):
                         for col_k, vals_v in f_acts["add_or_replace"].items():
+                            k_l = str(col_k).lower()
+                            if k_l in ["date range", "daterange", "date", "dates"] or col_k in date_cols:
+                                continue
                             v_list = vals_v if isinstance(vals_v, list) else [vals_v]
                             if v_list:
                                 applied_notes.append(f"Filter {col_k}: {', '.join(str(x) for x in v_list)}")
@@ -1430,25 +1674,50 @@ if show_copilot and col_copilot is not None:
                 if isinstance(c1_acts, dict):
                     if "x" in c1_acts or "y" in c1_acts:
                         applied_notes.append(f"Chart 1: {c1_acts.get('x', '')} × {c1_acts.get('y', '')}")
-                    elif "type" in c1_acts:
+                    if "type" in c1_acts:
                         applied_notes.append(f"Chart 1 Type: {c1_acts.get('type')}")
+                    if "agg" in c1_acts:
+                        applied_notes.append(f"Chart 1 Agg: {c1_acts.get('agg')}")
+                    for g_k in ["time_grain", "grain", "granularity"]:
+                        if g_k in c1_acts:
+                            applied_notes.append(f"Time Grain: {str(c1_acts[g_k]).title()}")
+                            break
+                    if "top_n" in c1_acts:
+                        applied_notes.append(f"Chart 1 Top: {c1_acts.get('top_n')}")
 
                 c2_acts = actions.get("chart2", {})
                 if isinstance(c2_acts, dict):
                     if "category" in c2_acts or "metric" in c2_acts:
                         applied_notes.append(f"Chart 2: {c2_acts.get('category', '')} × {c2_acts.get('metric', '')}")
-                    elif "type" in c2_acts:
+                    if "type" in c2_acts:
                         applied_notes.append(f"Chart 2 Type: {c2_acts.get('type')}")
-
+                    if "top_n" in c2_acts:
+                        applied_notes.append(f"Chart 2 Top: {c2_acts.get('top_n')}")
 
                 kpi_acts = actions.get("kpis", {})
                 if isinstance(kpi_acts, dict):
                     for k in ["kpi3_metric", "kpi4_metric"]:
                         if k in kpi_acts:
                             applied_notes.append(f"KPI: {kpi_acts[k]}")
+                    for k in ["kpi3_agg", "kpi4_agg"]:
+                        if k in kpi_acts:
+                            applied_notes.append(f"KPI Agg: {kpi_acts[k]}")
+
+                if "search" in actions:
+                    s_val = actions["search"]
+                    if s_val:
+                        applied_notes.append(f"Search: '{s_val}'")
+                    else:
+                        applied_notes.append("Cleared search")
 
                 if "active_tab" in actions:
                     applied_notes.append(f"Switched to {actions['active_tab']}")
+
+                if "show_copilot" in actions:
+                    applied_notes.append("Copilot: " + ("Shown" if actions["show_copilot"] else "Hidden"))
+
+                if actions.get("unload_dataset"):
+                    applied_notes.append("Dataset Unloaded")
 
             summary_note = f"Dashboard Updated: {' • '.join(applied_notes)}" if applied_notes else None
 
